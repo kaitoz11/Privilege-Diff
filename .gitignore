@@ -1,5 +1,6 @@
 /target/
 /.idea/
 /.vscode/
+.worktrees/
 *.swp
 .DS_Store
