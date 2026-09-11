@@ -143,11 +143,9 @@ fn collect_jobs(
             ..JobCapability::default()
         };
         if let Some(permissions) = value_at(job, "permissions") {
-            for (scope, access) in
-                collect_permissions(permissions, &format!("job {id}"), &mut capability.warnings)
-            {
-                job_capability.permissions.insert(scope, access);
-            }
+            // A job permission map replaces the workflow map; omitted scopes are none.
+            job_capability.permissions =
+                collect_permissions(permissions, &format!("job {id}"), &mut capability.warnings);
         }
         job_capability.oidc = job_capability
             .permissions

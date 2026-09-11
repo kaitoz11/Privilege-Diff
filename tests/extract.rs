@@ -33,6 +33,49 @@ fn extracts_job_privileges_from_a_workflow() {
 }
 
 #[test]
+fn job_permission_maps_replace_workflow_permissions() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/permissions.yml"),
+        r#"
+on: push
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+jobs:
+  restricted:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+  disabled:
+    permissions: {}
+    runs-on: ubuntu-latest
+  inherited:
+    runs-on: ubuntu-latest
+"#,
+    );
+
+    let restricted = &capability.jobs["restricted"];
+    assert!(!restricted.oidc);
+    assert_eq!(restricted.permissions["contents"], "read");
+    assert!(!restricted.permissions.contains_key("packages"));
+    assert!(!restricted.permissions.contains_key("id-token"));
+    assert_eq!(restricted.permissions.len(), 1);
+
+    let disabled = &capability.jobs["disabled"];
+    assert!(disabled.permissions.is_empty());
+    assert!(!disabled.oidc);
+
+    let inherited = &capability.jobs["inherited"];
+    assert_eq!(inherited.permissions["contents"], "write");
+    assert_eq!(inherited.permissions["packages"], "write");
+    assert_eq!(inherited.permissions["id-token"], "write");
+    assert!(inherited.oidc);
+    assert_eq!(capability.permissions, inherited.permissions);
+    assert!(capability.warnings.is_empty());
+}
+
+#[test]
 fn warns_for_dynamic_runners_and_keeps_static_group_labels() {
     let capability = extract_workflow(
         PathBuf::from(".github/workflows/runners.yml"),
