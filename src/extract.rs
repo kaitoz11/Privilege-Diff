@@ -63,9 +63,14 @@ fn collect_triggers(value: &Value, triggers: &mut BTreeSet<String>, warnings: &m
             }
         }
         Value::Mapping(events) => {
-            for (trigger, _) in events {
+            for (trigger, configuration) in events {
                 if let Some(trigger) = trigger.as_str() {
                     triggers.insert(trigger.to_owned());
+                    if !matches!(configuration, Value::Null | Value::Mapping(_)) {
+                        warnings.push(format!(
+                            "workflow trigger {trigger} configuration must be a mapping or null"
+                        ));
+                    }
                 } else {
                     warnings
                         .push("workflow trigger map contains a non-string event name".to_owned());
@@ -89,7 +94,13 @@ fn collect_permissions(
     let mut scopes = BTreeMap::new();
     for (scope, access) in permissions {
         match (scope.as_str(), access.as_str()) {
+            (Some(scope), Some(access @ ("read" | "write" | "none"))) => {
+                scopes.insert(scope.to_owned(), access.to_owned());
+            }
             (Some(scope), Some(access)) => {
+                warnings.push(format!(
+                    "{context} permission {scope} has unsupported access level {access}"
+                ));
                 scopes.insert(scope.to_owned(), access.to_owned());
             }
             _ => warnings.push(format!(
@@ -164,12 +175,12 @@ fn collect_runners(
 ) {
     match value {
         Value::String(runner) => {
-            runners.insert(runner.clone());
+            collect_runner_label(runner, job_id, runners, warnings);
         }
         Value::Sequence(values) => {
             for runner in values {
                 if let Some(runner) = runner.as_str() {
-                    runners.insert(runner.to_owned());
+                    collect_runner_label(runner, job_id, runners, warnings);
                 } else {
                     warnings.push(format!(
                         "job {job_id} runner list contains a non-string label"
@@ -177,8 +188,46 @@ fn collect_runners(
                 }
             }
         }
+        Value::Mapping(runner) => {
+            for (key, value) in runner {
+                let Some(key) = key.as_str() else {
+                    warnings.push(format!("job {job_id} runs-on contains a non-string key"));
+                    continue;
+                };
+                match key {
+                    "group" => match value.as_str() {
+                        Some(group) if !is_dynamic(group) => {}
+                        Some(_) => warnings.push(format!("job {job_id} runner group is dynamic")),
+                        None => {
+                            warnings.push(format!("job {job_id} runner group must be a string"))
+                        }
+                    },
+                    "labels" => collect_runners(value, job_id, runners, warnings),
+                    _ => warnings.push(format!(
+                        "job {job_id} runs-on contains unsupported key {key}"
+                    )),
+                }
+            }
+        }
         _ => warnings.push(format!("job {job_id} runs-on must be a string or list")),
     }
+}
+
+fn collect_runner_label(
+    runner: &str,
+    job_id: &str,
+    runners: &mut BTreeSet<String>,
+    warnings: &mut Vec<String>,
+) {
+    if is_dynamic(runner) {
+        warnings.push(format!("job {job_id} runner label is dynamic"));
+    } else {
+        runners.insert(runner.to_owned());
+    }
+}
+
+fn is_dynamic(value: &str) -> bool {
+    value.contains("${{")
 }
 
 fn collect_job_values(

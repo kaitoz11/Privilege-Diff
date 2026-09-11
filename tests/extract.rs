@@ -31,3 +31,85 @@ fn extracts_job_privileges_from_a_workflow() {
     assert!(release.secrets.contains("NPM_TOKEN"));
     assert_eq!(release.action_refs, vec!["actions/checkout@v4"]);
 }
+
+#[test]
+fn warns_for_dynamic_runners_and_keeps_static_group_labels() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/runners.yml"),
+        r#"
+on: push
+jobs:
+  dynamic:
+    runs-on: "${{ matrix.runner }}"
+  grouped:
+    runs-on:
+      group: deployment
+      labels:
+        - ubuntu-latest
+        - "${{ matrix.os }}"
+"#,
+    );
+
+    assert!(capability.jobs["dynamic"].runners.is_empty());
+    assert_eq!(
+        capability.jobs["grouped"]
+            .runners
+            .iter()
+            .collect::<Vec<_>>(),
+        vec!["ubuntu-latest"]
+    );
+    assert!(capability
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("dynamic")));
+}
+
+#[test]
+fn warns_for_unknown_permission_access_values() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/permissions.yml"),
+        r#"
+on: push
+permissions:
+  contents: administer
+jobs:
+  check:
+    runs-on: ubuntu-latest
+"#,
+    );
+
+    assert!(capability
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("unsupported access level")));
+}
+
+#[test]
+fn warns_for_malformed_trigger_configuration() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/trigger.yml"),
+        r#"
+on:
+  push: invalid
+jobs: {}
+"#,
+    );
+
+    assert!(capability.triggers.contains("push"));
+    assert!(capability
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("push") && warning.contains("configuration")));
+}
+
+#[test]
+fn capability_models_serialize_for_json_rendering() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/check.yml"),
+        "on: push\njobs: {}\n",
+    );
+
+    let serialized = serde_yaml::to_string(&capability).unwrap();
+
+    assert!(serialized.contains("triggers"));
+}
