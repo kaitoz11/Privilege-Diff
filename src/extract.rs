@@ -37,12 +37,18 @@ pub fn extract_workflow(path: PathBuf, source: &str) -> WorkflowCapability {
         );
     }
     if let Some(permission_value) = value_at(workflow, "permissions") {
-        capability.permissions =
+        (capability.permissions, capability.permissions_all) =
             collect_permissions(permission_value, "workflow", &mut capability.warnings);
     }
     if let Some(jobs) = value_at(workflow, "jobs") {
         let inherited_permissions = capability.permissions.clone();
-        collect_jobs(jobs, &inherited_permissions, &mut capability);
+        let inherited_permissions_all = capability.permissions_all.clone();
+        collect_jobs(
+            jobs,
+            &inherited_permissions,
+            inherited_permissions_all,
+            &mut capability,
+        );
     }
 
     capability
@@ -85,10 +91,13 @@ fn collect_permissions(
     value: &Value,
     context: &str,
     warnings: &mut Vec<String>,
-) -> BTreeMap<String, String> {
+) -> (BTreeMap<String, String>, Option<String>) {
+    if let Some(access @ ("read-all" | "write-all")) = value.as_str() {
+        return (BTreeMap::new(), Some(access.to_owned()));
+    }
     let Some(permissions) = value.as_mapping() else {
         warnings.push(format!("{context} permissions must be a mapping"));
-        return BTreeMap::new();
+        return (BTreeMap::new(), None);
     };
 
     let mut scopes = BTreeMap::new();
@@ -108,12 +117,13 @@ fn collect_permissions(
             )),
         }
     }
-    scopes
+    (scopes, None)
 }
 
 fn collect_jobs(
     value: &Value,
     inherited_permissions: &BTreeMap<String, String>,
+    inherited_permissions_all: Option<String>,
     capability: &mut WorkflowCapability,
 ) {
     let Some(jobs) = value.as_mapping() else {
@@ -140,17 +150,19 @@ fn collect_jobs(
         let mut job_capability = JobCapability {
             id: id.to_owned(),
             permissions: inherited_permissions.clone(),
+            permissions_all: inherited_permissions_all.clone(),
             ..JobCapability::default()
         };
         if let Some(permissions) = value_at(job, "permissions") {
             // A job permission map replaces the workflow map; omitted scopes are none.
-            job_capability.permissions =
+            (job_capability.permissions, job_capability.permissions_all) =
                 collect_permissions(permissions, &format!("job {id}"), &mut capability.warnings);
         }
         job_capability.oidc = job_capability
             .permissions
             .get("id-token")
-            .is_some_and(|access| access == "write");
+            .is_some_and(|access| access == "write")
+            || job_capability.permissions_all.as_deref() == Some("write-all");
 
         if let Some(runner) = value_at(job, "runs-on") {
             collect_runners(

@@ -27,19 +27,14 @@ pub fn diff_workflows(
             ));
         }
 
-        let base_warnings = base_workflow
-            .map(|workflow| workflow.warnings.iter().collect::<BTreeSet<_>>())
-            .unwrap_or_default();
         for warning in BTreeSet::from_iter(head_workflow.warnings.iter()) {
-            if !base_warnings.contains(warning) {
-                findings.push(workflow_finding(
-                    path,
-                    Severity::Warning,
-                    "unknown-capability",
-                    format!("Workflow analysis warning: {warning}"),
-                    "Resolve the unsupported or dynamic construct before relying on this comparison.",
-                ));
-            }
+            findings.push(workflow_finding(
+                path,
+                Severity::Warning,
+                "unknown-capability",
+                format!("Workflow analysis warning: {warning}"),
+                "Resolve the unsupported or dynamic construct before relying on this comparison.",
+            ));
         }
 
         for (job_id, head_job) in &head_workflow.jobs {
@@ -67,9 +62,22 @@ fn diff_job(
     findings: &mut Vec<Finding>,
 ) {
     let base_permissions = base.map(|job| &job.permissions);
+    let base_grants_write_all =
+        base.is_some_and(|job| job.permissions_all.as_deref() == Some("write-all"));
+    if head.permissions_all.as_deref() == Some("write-all") && !base_grants_write_all {
+        findings.push(job_finding(
+            path,
+            job_id,
+            Severity::High,
+            "token-permission",
+            "Added write-all token permissions.",
+            "Grant only the specific write scopes required by this narrowly scoped, reviewed job.",
+        ));
+    }
     for (scope, access) in &head.permissions {
         if scope != "id-token"
             && access == "write"
+            && !base_grants_write_all
             && base_permissions
                 .and_then(|permissions| permissions.get(scope))
                 .is_none_or(|base_access| base_access != "write")
@@ -136,7 +144,7 @@ fn diff_job(
                 Severity::High,
                 "mutable-action-reference",
                 format!("Added mutable action reference {action}."),
-                "Pin the action to a full-length commit SHA.",
+                mutable_action_remediation(action),
             ));
         }
     }
@@ -159,6 +167,14 @@ fn is_mutable_action_ref(action: &str) -> bool {
     }
 
     action.starts_with("docker://")
+}
+
+fn mutable_action_remediation(action: &str) -> &'static str {
+    if action.starts_with("docker://") {
+        "Pin the container image to an immutable sha256 digest."
+    } else {
+        "Pin the action to a full-length commit SHA."
+    }
 }
 
 fn is_full_commit_sha(reference: &str) -> bool {

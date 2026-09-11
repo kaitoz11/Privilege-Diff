@@ -25,6 +25,7 @@ pub struct WorkflowCapability {
     pub path: PathBuf,
     pub triggers: BTreeSet<String>,
     pub permissions: BTreeMap<String, String>,
+    pub permissions_all: Option<String>,
     pub jobs: BTreeMap<String, JobCapability>,
     pub warnings: Vec<String>,
 }
@@ -33,6 +34,7 @@ pub struct WorkflowCapability {
 pub struct JobCapability {
     pub id: String,
     pub permissions: BTreeMap<String, String>,
+    pub permissions_all: Option<String>,
     pub secrets: BTreeSet<String>,
     pub oidc: bool,
     pub runners: BTreeSet<String>,

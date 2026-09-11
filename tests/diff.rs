@@ -230,3 +230,90 @@ jobs:
 
     assert!(diff_workflows(&base, &head).is_empty());
 }
+
+#[test]
+fn retains_head_uncertainty_when_dynamic_runner_selector_changes() {
+    let base = workflows(
+        r#"
+on: push
+jobs:
+  release:
+    runs-on: "${{ inputs.runner }}"
+"#,
+    );
+    let head = workflows(
+        r#"
+on: push
+jobs:
+  release:
+    runs-on: "${{ matrix.runner }}"
+"#,
+    );
+
+    let findings = diff_workflows(&base, &head);
+
+    assert!(findings.iter().any(|finding| {
+        finding.severity == Severity::Warning
+            && finding.category == "unknown-capability"
+            && finding.message.contains("runner label is dynamic")
+    }));
+}
+
+#[test]
+fn does_not_report_a_write_added_after_a_write_all_baseline() {
+    let base = workflows(
+        r#"
+on: push
+permissions: write-all
+jobs:
+  release:
+    runs-on: ubuntu-latest
+"#,
+    );
+    let head = workflows(
+        r#"
+on: push
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+"#,
+    );
+
+    let findings = diff_workflows(&base, &head);
+
+    assert!(!findings
+        .iter()
+        .any(|finding| finding.category == "token-permission"));
+}
+
+#[test]
+fn recommends_a_digest_for_a_mutable_docker_reference() {
+    let base = workflows(
+        r#"
+on: push
+jobs:
+  release:
+    runs-on: ubuntu-latest
+"#,
+    );
+    let head = workflows(
+        r#"
+on: push
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker://alpine:latest
+"#,
+    );
+
+    let findings = diff_workflows(&base, &head);
+    let docker_finding = findings
+        .iter()
+        .find(|finding| finding.category == "mutable-action-reference")
+        .expect("a mutable Docker image should be reported");
+
+    assert!(docker_finding.remediation.contains("digest"));
+}
