@@ -8,6 +8,38 @@ a pull request expands who can trigger a workflow, what untrusted input can reac
 execution, which credentials or secrets are reachable, and what a compromised
 third-party action could do.
 
+## Run the local CLI
+
+With Rust/Cargo and Git installed, run from this checkout:
+
+```sh
+cargo run -- --repo /path/to/repository --base HEAD~1 --head HEAD
+cargo run -- --repo /path/to/repository --base HEAD~1 --head HEAD --format json
+```
+
+Or install the binary locally:
+
+```sh
+cargo install --path .
+privilege-diff --repo /path/to/repository --base HEAD~1 --head HEAD
+```
+
+The repository must contain the requested local Git revisions. Reports use
+committed workflow files, so uncommitted edits are not included. No GitHub token
+or network access is needed to run a comparison.
+
+Text is the default format and includes severity, workflow path, job (when
+applicable), category, explanation, and suggested control. `--format json` emits
+a stable, compact array with `severity`, `path`, `job`, `category`, `message`, and
+`remediation` fields; an empty report is `[]`. Symbolic secret names may appear
+in findings; literal environment values and workflow source are not reported.
+
+Exit codes are `0` when there are no high findings (warnings may still exist),
+`2` when at least one high finding exists, and `1` for invalid arguments,
+repository/revision errors, or YAML parse errors in either revision. Errors go
+to stderr. Unsupported workflow structures remain visible as warnings; a zero
+exit code is not a guarantee that a workflow is safe.
+
 ## Why this project
 
 CI workflows are executable supply-chain policy. A harmless-looking workflow
@@ -52,12 +84,13 @@ organization-level GitHub Actions policies.
 
 Rust, because the project benefits from a single static binary, reliable YAML
 handling, and easy SARIF output. The CLI will accept local Git revisions, e.g.
-`privilege-diff --base origin/main --head HEAD`, so it can run in any CI system
+`privilege-diff --repo . --base origin/main --head HEAD`, so it can run in any CI system
 without a GitHub token. GitHub API enrichment will remain opt-in.
 
 ## Status
 
-Planning. See [the project brief](docs/project-brief.md) and
+The initial local CLI supports text and JSON reports. SARIF, policy checks,
+and the GitHub Action wrapper are planned. See [the project brief](docs/project-brief.md) and
 [research notes](docs/research.md). Contributions and early design discussion
 are welcome once the repository is published to GitHub.
 
