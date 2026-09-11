@@ -1,0 +1,12 @@
+[package]
+name = "privilege-diff"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+thiserror = "1"
+
+[dev-dependencies]
+# Creates isolated on-disk Git repositories for integration tests.
+tempfile = "3"
