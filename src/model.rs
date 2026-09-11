@@ -3,6 +3,23 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    High,
+    Warning,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Finding {
+    pub severity: Severity,
+    pub path: PathBuf,
+    pub job: Option<String>,
+    pub category: String,
+    pub message: String,
+    pub remediation: String,
+}
+
 #[derive(Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorkflowCapability {
     pub path: PathBuf,
