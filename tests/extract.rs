@@ -113,3 +113,43 @@ fn capability_models_serialize_for_json_rendering() {
 
     assert!(serialized.contains("triggers"));
 }
+
+#[test]
+fn warns_for_static_runner_groups_that_the_model_cannot_represent() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/runners.yml"),
+        r#"
+on: push
+jobs:
+  deploy:
+    runs-on:
+      group: trusted-group
+"#,
+    );
+
+    assert!(capability.jobs["deploy"].runners.is_empty());
+    assert!(capability
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("runner group") && warning.contains("unsupported")));
+}
+
+#[test]
+fn warns_when_reusable_workflow_inherits_all_secrets() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/reusable.yml"),
+        r#"
+on: push
+jobs:
+  publish:
+    uses: owner/repository/.github/workflows/publish.yml@v1
+    secrets: inherit
+"#,
+    );
+
+    assert!(capability.jobs["publish"].secrets.is_empty());
+    assert!(capability
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("unknown secret access")));
+}

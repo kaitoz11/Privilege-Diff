@@ -196,7 +196,9 @@ fn collect_runners(
                 };
                 match key {
                     "group" => match value.as_str() {
-                        Some(group) if !is_dynamic(group) => {}
+                        Some(group) if !is_dynamic(group) => warnings.push(format!(
+                            "job {job_id} runner group is an unsupported runner-group capability"
+                        )),
                         Some(_) => warnings.push(format!("job {job_id} runner group is dynamic")),
                         None => {
                             warnings.push(format!("job {job_id} runner group must be a string"))
@@ -237,6 +239,11 @@ fn collect_job_values(
     warnings: &mut Vec<String>,
 ) {
     collect_secret_references(&Value::Mapping(job.clone()), &mut capability.secrets);
+    if value_at(job, "secrets").and_then(Value::as_str) == Some("inherit") {
+        warnings.push(format!(
+            "job {job_id} inherits secrets with unknown secret access"
+        ));
+    }
 
     if let Some(uses) = value_at(job, "uses") {
         collect_action_reference(uses, job_id, &mut capability.action_refs, warnings);
