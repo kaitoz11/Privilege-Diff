@@ -153,3 +153,23 @@ jobs:
         .iter()
         .any(|warning| warning.contains("unknown secret access")));
 }
+
+#[test]
+fn warns_for_dynamic_secret_access_without_recording_a_name() {
+    let capability = extract_workflow(
+        PathBuf::from(".github/workflows/dynamic-secret.yml"),
+        r#"
+on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ secrets[inputs.secret_name] }}"
+"#,
+    );
+
+    assert!(capability.jobs["publish"].secrets.is_empty());
+    assert!(capability.warnings.iter().any(|warning| {
+        warning.contains("job publish") && warning.contains("unknown secret access")
+    }));
+}

@@ -244,6 +244,11 @@ fn collect_job_values(
             "job {job_id} inherits secrets with unknown secret access"
         ));
     }
+    if has_non_symbolic_secret_access(&Value::Mapping(job.clone())) {
+        warnings.push(format!(
+            "job {job_id} uses non-symbolic secrets with unknown secret access"
+        ));
+    }
 
     if let Some(uses) = value_at(job, "uses") {
         collect_action_reference(uses, job_id, &mut capability.action_refs, warnings);
@@ -300,6 +305,17 @@ fn collect_secret_references(value: &Value, secrets: &mut BTreeSet<String>) {
             }
         }
         _ => {}
+    }
+}
+
+fn has_non_symbolic_secret_access(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("secrets[") || text.contains("secrets ["),
+        Value::Sequence(values) => values.iter().any(has_non_symbolic_secret_access),
+        Value::Mapping(values) => values.iter().any(|(key, value)| {
+            has_non_symbolic_secret_access(key) || has_non_symbolic_secret_access(value)
+        }),
+        _ => false,
     }
 }
 
