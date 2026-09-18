@@ -317,3 +317,42 @@ jobs:
 
     assert!(docker_finding.remediation.contains("digest"));
 }
+
+#[test]
+fn reports_workflow_environment_secret_exposure_in_existing_jobs() {
+    let base = workflows("on: push\npermissions: {}\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: deploy\n");
+    let head = workflows("on: push\npermissions: {}\nenv:\n  TOKEN: ${{ secrets.DEPLOY_TOKEN }}\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: deploy\n");
+    assert!(diff_workflows(&base, &head).iter().any(|finding| {
+        finding.category == "secret-access"
+            && finding.job.as_deref() == Some("release")
+            && finding.message.contains("DEPLOY_TOKEN")
+    }));
+}
+
+#[test]
+fn warns_when_explicit_permission_restrictions_are_removed() {
+    for restriction in ["permissions: read-all\n", "permissions: {}\n"] {
+        let body = "jobs:\n  release:\n    runs-on: ubuntu-latest\n";
+        let base = workflows(&format!("on: push\n{restriction}{body}"));
+        let head = workflows(&format!("on: push\n{body}"));
+        assert!(diff_workflows(&base, &head).iter().any(|finding| {
+            finding.severity == Severity::Warning
+                && finding.category == "unknown-capability"
+                && finding.message.contains("permission defaults")
+        }));
+        assert!(diff_workflows(&head, &base).is_empty());
+    }
+}
+
+#[test]
+fn literal_context_mentions_do_not_hide_new_expression_risks() {
+    let base = workflows("on: push\npermissions: {}\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo github.event.pull_request.title secrets.DEPLOY_TOKEN\n");
+    let head = workflows("on: push\npermissions: {}\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ${{ github.event.pull_request.title }} ${{ secrets.DEPLOY_TOKEN }}\n");
+    let findings = diff_workflows(&base, &head);
+    for category in ["secret-access", "untrusted-context"] {
+        assert!(
+            findings.iter().any(|finding| finding.category == category),
+            "missing {category}"
+        );
+    }
+}

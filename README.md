@@ -34,6 +34,9 @@ revisions Git can resolve, such as `origin/main` and `HEAD`. The repository must
 contain both requested revisions. The comparison reads committed `.yml` and
 `.yaml` files below `.github/workflows` from those revisions; uncommitted edits
 are not included. It does not need a GitHub token or network access.
+Git lazy fetching is disabled: missing objects in a partial clone produce an
+input error. Make the requested revisions and workflow blobs available locally
+before running a comparison.
 
 ## Output and exit status
 
@@ -69,7 +72,8 @@ This first milestone reports newly introduced high-severity findings for:
 
 - `pull_request_target` triggers;
 - `write-all` or individual `*: write` token permissions (except `id-token`, which is reported separately);
-- symbolic `secrets.NAME` references;
+- symbolic `secrets.NAME` references inside expressions, including workflow
+  environment variables inherited by jobs;
 - `id-token: write` / OIDC access;
 - self-hosted runners;
 - newly added mutable action references, including Docker images not pinned to a `sha256` digest; and
@@ -77,10 +81,20 @@ This first milestone reports newly introduced high-severity findings for:
 
 It also emits warning findings when it encounters supported-field structures it
 cannot model confidently, including dynamic runner labels, dynamic/non-symbolic
-secret access, and unsupported YAML shapes. Existing uncertainty warnings from
+secret access (such as `toJSON(secrets)`), missing required workflow keys, and
+unsupported YAML shapes. Jobs without explicit workflow or job permissions warn
+because repository and organization permission defaults are unavailable locally;
+an explicit `permissions: {}` remains a known empty restriction.
+Existing uncertainty warnings from
 the head revision remain visible even when they were also present in the base
 revision. A warning-only report deliberately exits `0`, but warnings must be
 reviewed; a zero exit code is not a safety guarantee.
+
+Job environment variables override workflow variables with the same name.
+Step environment overrides are conservatively warned about, and inherited
+secret exposure may be overstated in those jobs. Caller workflow environment
+variables are not propagated to reusable workflow jobs. Literal mentions of
+`secrets.NAME` or `github.event` outside expressions do not count as access.
 
 The tool is a conservative, static comparison—not a complete GitHub Actions
 interpreter. It does not execute workflows, evaluate expressions or shell code,

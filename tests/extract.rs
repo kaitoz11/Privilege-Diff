@@ -216,3 +216,117 @@ jobs:
         warning.contains("job publish") && warning.contains("unknown secret access")
     }));
 }
+
+#[test]
+fn workflow_env_respects_job_overrides_and_warns_for_step_overrides() {
+    let capability = extract_workflow(
+        PathBuf::from("env.yml"),
+        r#"
+on: push
+permissions: {}
+env:
+  TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+jobs:
+  inherited:
+    runs-on: ubuntu-latest
+  overridden:
+    env:
+      TOKEN: literal
+    runs-on: ubuntu-latest
+  step_override:
+    runs-on: ubuntu-latest
+    steps:
+      - run: deploy
+        env:
+          TOKEN: literal
+  reusable:
+    uses: ./.github/workflows/called.yml
+"#,
+    );
+    assert!(capability.jobs["inherited"]
+        .secrets
+        .contains("DEPLOY_TOKEN"));
+    assert!(capability.jobs["overridden"].secrets.is_empty());
+    assert!(capability.jobs["reusable"].secrets.is_empty());
+    assert!(capability
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("step_override") && warning.contains("env override")));
+}
+
+#[test]
+fn whole_secret_context_expressions_warn_without_fabricating_names() {
+    for expression in [
+        "toJSON(secrets)",
+        "secrets",
+        "secrets.*",
+        "secrets [inputs.name]",
+        "toJSON(SECRETS)",
+    ] {
+        let source = format!("on: push\npermissions: {{}}\nenv:\n  PAYLOAD: ${{{{ {expression} }}}}\njobs:\n  check:\n    runs-on: ubuntu-latest\n");
+        let capability = extract_workflow(PathBuf::from("secrets.yml"), &source);
+        assert!(capability.jobs["check"].secrets.is_empty());
+        assert!(
+            capability
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown secret access")),
+            "missed {expression}"
+        );
+    }
+}
+
+#[test]
+fn expression_scanning_ignores_literals_and_handles_expression_boundaries() {
+    let capability = extract_workflow(
+        PathBuf::from("expressions.yml"),
+        r#"
+on: push
+permissions: {}
+jobs:
+  literals:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo secrets.NAME github.event.title ${{ 'secrets.HIDDEN github.event' }} ${{ env.secrets.NAME }}
+  expressions:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ format('}} secrets.IGNORED', secrets . ACTUAL) }} ${{ github . event . issue . title }}
+"#,
+    );
+    assert!(capability.jobs["literals"].secrets.is_empty());
+    assert!(!capability.jobs["literals"].untrusted_script_context);
+    assert_eq!(
+        capability.jobs["expressions"]
+            .secrets
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["ACTUAL"]
+    );
+    assert!(capability.jobs["expressions"].untrusted_script_context);
+    assert!(capability.warnings.is_empty());
+}
+
+#[test]
+fn missing_required_workflow_keys_are_visible_warnings() {
+    for (source, missing) in [("name: example\n", "on"), ("on: push\n", "jobs")] {
+        let capability = extract_workflow(PathBuf::from("missing.yml"), source);
+        assert!(capability
+            .warnings
+            .iter()
+            .any(|warning| { warning.contains("missing") && warning.contains(missing) }));
+    }
+}
+
+#[test]
+fn library_parse_warnings_never_retain_yaml_source_values() {
+    let capability = extract_workflow(
+        PathBuf::from("private.yml"),
+        "env:\n  PRIVATE_LITERAL: first\n  PRIVATE_LITERAL: second\n",
+    );
+    let warnings = serde_json::to_string(&capability.warnings).unwrap();
+    assert!(warnings.contains("could not parse workflow YAML"));
+    assert!(!warnings.contains("PRIVATE_LITERAL"));
+    assert!(warnings.contains("line") && warnings.contains("column"));
+}

@@ -26,6 +26,8 @@ pub struct WorkflowCapability {
     pub triggers: BTreeSet<String>,
     pub permissions: BTreeMap<String, String>,
     pub permissions_all: Option<String>,
+    /// False means repository/organization defaults are unavailable locally.
+    pub permissions_explicit: bool,
     pub jobs: BTreeMap<String, JobCapability>,
     pub warnings: Vec<String>,
 }
@@ -35,6 +37,8 @@ pub struct JobCapability {
     pub id: String,
     pub permissions: BTreeMap<String, String>,
     pub permissions_all: Option<String>,
+    /// True when permissions are declared on this job or inherited from the workflow.
+    pub permissions_explicit: bool,
     pub secrets: BTreeSet<String>,
     pub oidc: bool,
     pub runners: BTreeSet<String>,

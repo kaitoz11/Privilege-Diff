@@ -16,9 +16,12 @@ pub fn extract_workflow(path: PathBuf, source: &str) -> WorkflowCapability {
     let document = match serde_yaml::from_str::<Value>(source) {
         Ok(document) => document,
         Err(error) => {
+            let location = error.location().map_or_else(String::new, |location| {
+                format!(" at line {}, column {}", location.line(), location.column())
+            });
             capability
                 .warnings
-                .push(format!("could not parse workflow YAML: {error}"));
+                .push(format!("could not parse workflow YAML{location}"));
             return capability;
         }
     };
@@ -35,8 +38,13 @@ pub fn extract_workflow(path: PathBuf, source: &str) -> WorkflowCapability {
             &mut capability.triggers,
             &mut capability.warnings,
         );
+    } else {
+        capability
+            .warnings
+            .push("workflow is missing required on triggers".to_owned());
     }
     if let Some(permission_value) = value_at(workflow, "permissions") {
+        capability.permissions_explicit = true;
         (capability.permissions, capability.permissions_all) =
             collect_permissions(permission_value, "workflow", &mut capability.warnings);
     }
@@ -47,8 +55,13 @@ pub fn extract_workflow(path: PathBuf, source: &str) -> WorkflowCapability {
             jobs,
             &inherited_permissions,
             inherited_permissions_all,
+            value_at(workflow, "env"),
             &mut capability,
         );
+    } else {
+        capability
+            .warnings
+            .push("workflow is missing required jobs".to_owned());
     }
 
     capability
@@ -124,6 +137,7 @@ fn collect_jobs(
     value: &Value,
     inherited_permissions: &BTreeMap<String, String>,
     inherited_permissions_all: Option<String>,
+    workflow_env: Option<&Value>,
     capability: &mut WorkflowCapability,
 ) {
     let Some(jobs) = value.as_mapping() else {
@@ -151,12 +165,19 @@ fn collect_jobs(
             id: id.to_owned(),
             permissions: inherited_permissions.clone(),
             permissions_all: inherited_permissions_all.clone(),
+            permissions_explicit: capability.permissions_explicit,
             ..JobCapability::default()
         };
         if let Some(permissions) = value_at(job, "permissions") {
+            job_capability.permissions_explicit = true;
             // A job permission map replaces the workflow map; omitted scopes are none.
             (job_capability.permissions, job_capability.permissions_all) =
                 collect_permissions(permissions, &format!("job {id}"), &mut capability.warnings);
+        }
+        if !job_capability.permissions_explicit {
+            capability.warnings.push(format!(
+                "job {id} permission defaults from the repository or organization are unknown"
+            ));
         }
         job_capability.oidc = job_capability
             .permissions
@@ -173,7 +194,66 @@ fn collect_jobs(
             );
         }
         collect_job_values(job, id, &mut job_capability, &mut capability.warnings);
+        collect_inherited_env(
+            workflow_env,
+            job,
+            id,
+            &mut job_capability,
+            &mut capability.warnings,
+        );
         capability.jobs.insert(id.to_owned(), job_capability);
+    }
+}
+
+fn collect_inherited_env(
+    workflow_env: Option<&Value>,
+    job: &Mapping,
+    job_id: &str,
+    capability: &mut JobCapability,
+    warnings: &mut Vec<String>,
+) {
+    // Caller workflow env is not passed into a reusable workflow.
+    if value_at(job, "uses").is_some() {
+        return;
+    }
+    let Some(workflow_env) = workflow_env else {
+        return;
+    };
+    let Some(workflow_env) = workflow_env.as_mapping() else {
+        warnings.push("workflow env must be a mapping; secret exposure is unknown".to_owned());
+        return;
+    };
+    let mut effective_env = workflow_env.clone();
+    if let Some(job_env) = value_at(job, "env") {
+        if let Some(job_env) = job_env.as_mapping() {
+            effective_env.extend(job_env.clone());
+        } else {
+            warnings.push(format!(
+                "job {job_id} env override is unsupported; secret exposure is unknown"
+            ));
+        }
+    }
+    let has_step_override = value_at(job, "steps")
+        .and_then(Value::as_sequence)
+        .is_some_and(|steps| {
+            steps.iter().any(|step| {
+                step.as_mapping()
+                    .and_then(|step| value_at(step, "env"))
+                    .is_some_and(|env| {
+                        env.as_mapping()
+                            .is_none_or(|env| env.keys().any(|key| effective_env.contains_key(key)))
+                    })
+            })
+        });
+    if has_step_override {
+        warnings.push(format!("job {job_id} step env override is not modeled; inherited secret exposure is conservative"));
+    }
+    let effective_env = Value::Mapping(effective_env);
+    collect_secret_references(&effective_env, &mut capability.secrets);
+    if has_non_symbolic_secret_access(&effective_env) {
+        warnings.push(format!(
+            "job {job_id} env uses non-symbolic secrets with unknown secret access"
+        ));
     }
 }
 
@@ -320,7 +400,9 @@ fn collect_secret_references(value: &Value, secrets: &mut BTreeSet<String>) {
 
 fn has_non_symbolic_secret_access(value: &Value) -> bool {
     match value {
-        Value::String(text) => text.contains("secrets[") || text.contains("secrets ["),
+        Value::String(text) => context_accesses(text, "secrets")
+            .iter()
+            .any(|name| name.is_none_or(|name| !is_secret_name(name))),
         Value::Sequence(values) => values.iter().any(has_non_symbolic_secret_access),
         Value::Mapping(values) => values.iter().any(|(key, value)| {
             has_non_symbolic_secret_access(key) || has_non_symbolic_secret_access(value)
@@ -330,38 +412,115 @@ fn has_non_symbolic_secret_access(value: &Value) -> bool {
 }
 
 fn collect_secret_names(text: &str, secrets: &mut BTreeSet<String>) {
-    let mut remaining = text;
-    while let Some(index) = remaining.find("secrets.") {
-        let candidate = &remaining[index + "secrets.".len()..];
-        let name_len = candidate
-            .bytes()
-            .take_while(|byte| {
-                byte.is_ascii_uppercase()
-                    || byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || *byte == b'_'
-            })
-            .count();
-        if name_len > 0 {
-            let name = &candidate[..name_len];
-            if name.as_bytes()[0].is_ascii_alphabetic() || name.starts_with('_') {
-                secrets.insert(name.to_owned());
-            }
+    for name in context_accesses(text, "secrets").into_iter().flatten() {
+        if is_secret_name(name) {
+            secrets.insert(name.to_owned());
         }
-        remaining = candidate;
     }
 }
 
+fn is_secret_name(name: &str) -> bool {
+    name.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
 fn has_untrusted_context(script: &str) -> bool {
-    [
-        "github.event",
-        "github.head_ref",
-        "github.base_ref",
-        "github.actor",
-        "github.triggering_actor",
-    ]
-    .iter()
-    .any(|context| script.contains(context))
+    context_accesses(script, "github").iter().any(|property| {
+        // Whole-context and dynamic access can include attacker-controlled fields.
+        property.is_none_or(|property| {
+            ["event", "head_ref", "base_ref", "actor", "triggering_actor"]
+                .iter()
+                .any(|untrusted| property.eq_ignore_ascii_case(untrusted))
+        })
+    })
+}
+
+/// Static root-context property accesses within expressions only. None means
+/// a whole-context or dynamic access that cannot name a single property.
+fn context_accesses<'a>(text: &'a str, context: &str) -> Vec<Option<&'a str>> {
+    let mut accesses = Vec::new();
+    for expression in expression_regions(text) {
+        let tokens = expression_tokens(expression);
+        for (index, token) in tokens.iter().enumerate() {
+            if !token.eq_ignore_ascii_case(context) || (index > 0 && tokens[index - 1] == ".") {
+                continue;
+            }
+            let property = if tokens.get(index + 1) == Some(&".") {
+                tokens.get(index + 2).copied().filter(|property| {
+                    property.starts_with(|character: char| {
+                        character.is_ascii_alphabetic() || character == '_'
+                    })
+                })
+            } else {
+                None
+            };
+            accesses.push(property);
+        }
+    }
+    accesses
+}
+
+fn expression_regions(text: &str) -> Vec<&str> {
+    let mut expressions = Vec::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("${{") {
+        remaining = &remaining[start + 3..];
+        let bytes = remaining.as_bytes();
+        let mut quoted = false;
+        let mut end = 0;
+        while end < bytes.len() {
+            if bytes[end] == b'\'' {
+                // A doubled quote toggles twice, preserving the quoted region.
+                quoted = !quoted;
+            } else if !quoted && bytes[end..].starts_with(b"}}") {
+                break;
+            }
+            end += 1;
+        }
+        if end == bytes.len() {
+            break;
+        }
+        expressions.push(&remaining[..end]);
+        remaining = &remaining[end + 2..];
+    }
+    expressions
+}
+
+fn expression_tokens(expression: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut remaining = expression;
+    while !remaining.is_empty() {
+        remaining = remaining.trim_start();
+        let Some(first) = remaining.chars().next() else {
+            break;
+        };
+        let length = if first == '\'' {
+            let bytes = remaining.as_bytes();
+            let mut end = 1;
+            while end < bytes.len() {
+                if bytes[end] == b'\'' {
+                    end += 1;
+                    if bytes.get(end) != Some(&b'\'') {
+                        break;
+                    }
+                }
+                end += 1;
+            }
+            end
+        } else if first.is_ascii_alphanumeric() || first == '_' {
+            remaining
+                .bytes()
+                .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-')
+                .count()
+        } else {
+            first.len_utf8()
+        };
+        tokens.push(&remaining[..length]);
+        remaining = &remaining[length..];
+    }
+    tokens
 }
 
 fn value_at<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a Value> {
