@@ -10,7 +10,7 @@ third-party action could do.
 
 ## Install and run
 
-The CLI requires Rust/Cargo and Git. Install it from this checkout:
+The CLI requires Rust/Cargo and Git 2.45 or newer. Install it from this checkout:
 
 ```sh
 cargo install --path .
@@ -34,9 +34,11 @@ revisions Git can resolve, such as `origin/main` and `HEAD`. The repository must
 contain both requested revisions. The comparison reads committed `.yml` and
 `.yaml` files below `.github/workflows` from those revisions; uncommitted edits
 are not included. It does not need a GitHub token or network access.
-Git lazy fetching is disabled: missing objects in a partial clone produce an
-input error. Make the requested revisions and workflow blobs available locally
-before running a comparison.
+Git lazy fetching is disabled with Git's `--no-lazy-fetch` global option:
+missing objects in a partial clone produce an input error instead of triggering
+a fetch. Git versions older than 2.45 reject that option before object access,
+so they are not supported. Make the requested revisions and workflow blobs
+available locally before running a comparison.
 
 ## Output and exit status
 

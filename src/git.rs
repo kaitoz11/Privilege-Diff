@@ -82,11 +82,7 @@ fn git(
     operation: &'static str,
     args: &[&str],
 ) -> Result<std::process::Output, GitError> {
-    let output = Command::new("git")
-        .env("GIT_NO_LAZY_FETCH", "1")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
+    let output = git_command(repo, args)
         .output()
         .map_err(|source| GitError::Invocation { operation, source })?;
 
@@ -96,6 +92,17 @@ fn git(
 
     let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     Err(GitError::Command { operation, message })
+}
+
+fn git_command(repo: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .arg("--no-lazy-fetch")
+        .arg("-C")
+        .arg(repo)
+        .args(args);
+    command
 }
 
 #[cfg(all(test, unix))]
@@ -114,5 +121,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output.stdout, b"1");
+    }
+
+    #[test]
+    fn every_git_invocation_uses_the_global_no_lazy_fetch_option() {
+        let repo = tempfile::tempdir().unwrap();
+        let command = super::git_command(repo.path(), &["rev-parse", "HEAD"]);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(args.first(), Some(&"--no-lazy-fetch".to_owned()));
     }
 }
