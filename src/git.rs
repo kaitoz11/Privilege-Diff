@@ -46,6 +46,7 @@ pub fn workflows_at(repo: &Path, revision: &str) -> Result<BTreeMap<PathBuf, Str
             "ls-tree",
             "-r",
             "--name-only",
+            "-z",
             &revision,
             "--",
             ".github/workflows",
@@ -58,7 +59,7 @@ pub fn workflows_at(repo: &Path, revision: &str) -> Result<BTreeMap<PathBuf, Str
 
     let mut workflows = BTreeMap::new();
     for path in paths
-        .lines()
+        .split('\0')
         .filter(|path| path.ends_with(".yml") || path.ends_with(".yaml"))
     {
         let contents = git(
@@ -82,6 +83,7 @@ fn git(
     args: &[&str],
 ) -> Result<std::process::Output, GitError> {
     let output = Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -94,4 +96,23 @@ fn git(
 
     let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     Err(GitError::Command { operation, message })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[test]
+    fn every_git_invocation_disables_lazy_fetching() {
+        let repo = tempfile::tempdir().unwrap();
+        let output = super::git(
+            repo.path(),
+            "inspect local-only environment",
+            &[
+                "-c",
+                "alias.inspect-local-only=!printf '%s' \"$GIT_NO_LAZY_FETCH\"",
+                "inspect-local-only",
+            ],
+        )
+        .unwrap();
+        assert_eq!(output.stdout, b"1");
+    }
 }

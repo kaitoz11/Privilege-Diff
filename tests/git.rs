@@ -50,3 +50,53 @@ fn reads_only_workflow_yaml_files_at_a_revision() {
         ]
     );
 }
+
+#[test]
+fn reads_workflows_with_unicode_and_quoted_filenames_losslessly() {
+    let repo = repository();
+    let names = ["triển-khai.yml", "quoted\"name.yaml", "line\nbreak.yml"];
+    for name in names {
+        fs::write(
+            repo.path().join(".github/workflows").join(name),
+            "on: push\n",
+        )
+        .unwrap();
+    }
+    git(&repo, &["add", "."]);
+    git(
+        &repo,
+        &["commit", "--quiet", "-m", "unusual workflow paths"],
+    );
+
+    let files = workflows_at(repo.path(), "HEAD").unwrap();
+    for name in names {
+        assert_eq!(
+            files.get(&PathBuf::from(".github/workflows").join(name)),
+            Some(&"on: push\n".to_owned()),
+            "missing workflow {name:?}"
+        );
+    }
+}
+
+#[test]
+fn missing_promised_workflow_blobs_error_without_fetching() {
+    let origin = repository();
+    git(&origin, &["config", "uploadpack.allowFilter", "true"]);
+    let clone = tempfile::tempdir().unwrap();
+    let output = Command::new("git")
+        .args(["clone", "--quiet", "--no-checkout", "--filter=blob:none"])
+        .arg(format!("file://{}", origin.path().display()))
+        .arg(clone.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let error = workflows_at(clone.path(), "HEAD").unwrap_err();
+    assert!(matches!(
+        error,
+        privilege_diff::GitError::Command {
+            operation: "read workflow file",
+            ..
+        }
+    ));
+}
