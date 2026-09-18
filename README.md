@@ -49,13 +49,15 @@ privilege-diff --repo . --base HEAD~1 --head HEAD --format json
 
 Each JSON finding has `severity`, `path`, `job`, `category`, `message`, and
 `remediation` fields. `job` is `null` for workflow-level findings, and an empty
-report is `[]`. Output order is deterministic. Symbolic secret names may appear
-in findings; literal workflow values and source contents are not printed.
+report is `[]`. Output order is deterministic. Literal environment values and
+script bodies are not printed. Findings can include capability identifiers and
+references, such as symbolic secret names, action references, and unsupported
+permission values.
 
 | Status | Meaning |
 | --- | --- |
-| `0` | No high-severity finding. Warnings may still be reported. |
-| `2` | At least one high-severity finding was reported. The report is still written to stdout. |
+| `0` | A warning-only report, or no findings. |
+| `2` | At least one high-severity finding was reported, including when warnings are also present. The report is still written to stdout. |
 | `1` | Invalid arguments, an unreadable/non-repository path, an unresolved revision, or malformed workflow YAML. Errors are written to stderr and no report is emitted. |
 
 `--help` and `--version` exit `0`. In automation, treat `2` as a review result
@@ -75,15 +77,17 @@ This first milestone reports newly introduced high-severity findings for:
 
 It also emits warning findings when it encounters supported-field structures it
 cannot model confidently, including dynamic runner labels, dynamic/non-symbolic
-secret access, and unsupported YAML shapes. Warnings deliberately exit `0` and
-must be reviewed; a zero exit code is not a safety guarantee.
+secret access, and unsupported YAML shapes. Existing uncertainty warnings from
+the head revision remain visible even when they were also present in the base
+revision. A warning-only report deliberately exits `0`, but warnings must be
+reviewed; a zero exit code is not a safety guarantee.
 
 The tool is a conservative, static comparison—not a complete GitHub Actions
 interpreter. It does not execute workflows, evaluate expressions or shell code,
 trace data flow, inspect reusable workflow or composite-action definitions,
 resolve action contents, or apply GitHub/organization policy. It only compares
-workflow files present in the head revision and reports additions or newly
-observed uncertainty; it does not report removals or risk reductions. SARIF,
+workflow files present in the head revision and reports additions; it does not
+report removals or risk reductions. SARIF,
 policy-as-code checks, and a GitHub Action wrapper are not included in this
 milestone.
 
@@ -94,7 +98,9 @@ change can introduce `pull_request_target`, grant `contents: write`, expose a
 secret to a new job, or replace an immutable action SHA with a mutable tag. The
 usual code review view makes these changes difficult to reason about together.
 
-Privilege Diff turns a workflow change into a concise security review:
+Privilege Diff turns a workflow change into a concise security review. The
+following is illustrative rather than literal CLI output; actual text output
+renders one finding at a time with a category and suggested control:
 
 ```text
 HIGH  .github/workflows/release.yml
