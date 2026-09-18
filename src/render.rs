@@ -7,7 +7,7 @@ fn escape_terminal_text(value: &str) -> String {
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
             '\t' => escaped.push_str("\\t"),
-            '\0'..='\u{1f}' | '\u{7f}' => {
+            character if character.is_control() => {
                 use std::fmt::Write;
 
                 write!(escaped, "\\x{:02x}", character as u32)
@@ -69,13 +69,13 @@ mod tests {
             path: PathBuf::from(".github/workflows/check\nname\u{1b}[31m.yml"),
             job: Some("release\rjob".to_owned()),
             category: "token\u{7f}permission".to_owned(),
-            message: "new\tpermission\u{1b}[0m".to_owned(),
+            message: "new\tpermission\u{1b}[0m\u{009b}31m".to_owned(),
             remediation: "use\u{0001}least privilege".to_owned(),
         }];
 
         assert_eq!(
             render_text(&findings),
-            "HIGH  .github/workflows/check\\nname\\x1b[31m.yml (job: release\\rjob) [token\\x7fpermission]\n  new\\tpermission\\x1b[0m\n  Suggested control: use\\x01least privilege\n"
+            "HIGH  .github/workflows/check\\nname\\x1b[31m.yml (job: release\\rjob) [token\\x7fpermission]\n  new\\tpermission\\x1b[0m\\x9b31m\n  Suggested control: use\\x01least privilege\n"
         );
     }
 }
