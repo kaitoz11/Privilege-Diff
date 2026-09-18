@@ -2,43 +2,90 @@
 
 **Review GitHub Actions changes by their effective privilege, not just their YAML diff.**
 
-Privilege Diff is an open-source, local-first CLI and GitHub Action that compares
+Privilege Diff is an open-source, local-first CLI that compares
 two revisions of a repository's GitHub Actions configuration. It explains whether
 a pull request expands who can trigger a workflow, what untrusted input can reach
 execution, which credentials or secrets are reachable, and what a compromised
 third-party action could do.
 
-## Run the local CLI
+## Install and run
 
-With Rust/Cargo and Git installed, run from this checkout:
-
-```sh
-cargo run -- --repo /path/to/repository --base HEAD~1 --head HEAD
-cargo run -- --repo /path/to/repository --base HEAD~1 --head HEAD --format json
-```
-
-Or install the binary locally:
+The CLI requires Rust/Cargo and Git. Install it from this checkout:
 
 ```sh
 cargo install --path .
 privilege-diff --repo /path/to/repository --base HEAD~1 --head HEAD
 ```
 
-The repository must contain the requested local Git revisions. Reports use
-committed workflow files, so uncommitted edits are not included. No GitHub token
-or network access is needed to run a comparison.
+To compare the two most recent commits in the current repository, run:
 
-Text is the default format and includes severity, workflow path, job (when
-applicable), category, explanation, and suggested control. `--format json` emits
-a stable, compact array with `severity`, `path`, `job`, `category`, `message`, and
-`remediation` fields; an empty report is `[]`. Symbolic secret names may appear
-in findings; literal environment values and workflow source are not reported.
+```sh
+privilege-diff --repo . --base HEAD~1 --head HEAD
+```
 
-Exit codes are `0` when there are no high findings (warnings may still exist),
-`2` when at least one high finding exists, and `1` for invalid arguments,
-repository/revision errors, or YAML parse errors in either revision. Errors go
-to stderr. Unsupported workflow structures remain visible as warnings; a zero
-exit code is not a guarantee that a workflow is safe.
+For development without installing the binary, prepend `cargo run --`:
+
+```sh
+cargo run -- --repo . --base HEAD~1 --head HEAD
+```
+
+`--repo`, `--base`, and `--head` are required. Revisions can be any local Git
+revisions Git can resolve, such as `origin/main` and `HEAD`. The repository must
+contain both requested revisions. The comparison reads committed `.yml` and
+`.yaml` files below `.github/workflows` from those revisions; uncommitted edits
+are not included. It does not need a GitHub token or network access.
+
+## Output and exit status
+
+`--format text` is the default. It prints each finding's severity, workflow path,
+optional job, category, explanation, and suggested control. With no findings it
+prints `No privilege-increasing changes detected.`
+
+Use `--format json` for a compact JSON array, terminated by a newline:
+
+```sh
+privilege-diff --repo . --base HEAD~1 --head HEAD --format json
+```
+
+Each JSON finding has `severity`, `path`, `job`, `category`, `message`, and
+`remediation` fields. `job` is `null` for workflow-level findings, and an empty
+report is `[]`. Output order is deterministic. Symbolic secret names may appear
+in findings; literal workflow values and source contents are not printed.
+
+| Status | Meaning |
+| --- | --- |
+| `0` | No high-severity finding. Warnings may still be reported. |
+| `2` | At least one high-severity finding was reported. The report is still written to stdout. |
+| `1` | Invalid arguments, an unreadable/non-repository path, an unresolved revision, or malformed workflow YAML. Errors are written to stderr and no report is emitted. |
+
+`--help` and `--version` exit `0`. In automation, treat `2` as a review result
+rather than a command failure that prevents reading stdout.
+
+## Current detection and limitations
+
+This first milestone reports newly introduced high-severity findings for:
+
+- `pull_request_target` triggers;
+- `write-all` or individual `*: write` token permissions (except `id-token`, which is reported separately);
+- symbolic `secrets.NAME` references;
+- `id-token: write` / OIDC access;
+- self-hosted runners;
+- newly added mutable action references, including Docker images not pinned to a `sha256` digest; and
+- direct interpolation of selected untrusted `github.*` contexts in `run` scripts.
+
+It also emits warning findings when it encounters supported-field structures it
+cannot model confidently, including dynamic runner labels, dynamic/non-symbolic
+secret access, and unsupported YAML shapes. Warnings deliberately exit `0` and
+must be reviewed; a zero exit code is not a safety guarantee.
+
+The tool is a conservative, static comparison—not a complete GitHub Actions
+interpreter. It does not execute workflows, evaluate expressions or shell code,
+trace data flow, inspect reusable workflow or composite-action definitions,
+resolve action contents, or apply GitHub/organization policy. It only compares
+workflow files present in the head revision and reports additions or newly
+observed uncertainty; it does not report removals or risk reductions. SARIF,
+policy-as-code checks, and a GitHub Action wrapper are not included in this
+milestone.
 
 ## Why this project
 
@@ -60,39 +107,10 @@ HIGH  .github/workflows/release.yml
 It complements, rather than replaces, workflow linters such as zizmor and
 organization-level GitHub Actions policies.
 
-## Planned first release
-
-1. Parse GitHub Actions workflow and composite-action YAML from a base and head revision.
-2. Build a conservative per-job capability model: triggers, token permissions,
-   secret references, OIDC access, runner class, `uses:` dependencies, and
-   untrusted-context execution.
-3. Report additions, removals, and risk-increasing changes in terminal text and
-   SARIF.
-4. Provide policy-as-code checks for baseline rules: no mutable action refs,
-   no new privileged fork-triggered execution, and no new secret access without
-   an explicit review annotation.
-5. Ship as a standalone CLI first; the GitHub Action is a thin wrapper.
-
-## Non-goals for v0.1
-
-- Runtime network monitoring or secret rotation.
-- Replacing GitHub organization policy, branch protection, CodeQL, or zizmor.
-- Proving that arbitrary shell code is safe.
-- Connecting to GitHub by default; local Git input is the primary interface.
-
-## Initial technical direction
-
-Rust, because the project benefits from a single static binary, reliable YAML
-handling, and easy SARIF output. The CLI will accept local Git revisions, e.g.
-`privilege-diff --repo . --base origin/main --head HEAD`, so it can run in any CI system
-without a GitHub token. GitHub API enrichment will remain opt-in.
-
 ## Status
 
-The initial local CLI supports text and JSON reports. SARIF, policy checks,
-and the GitHub Action wrapper are planned. See [the project brief](docs/project-brief.md) and
-[research notes](docs/research.md). Contributions and early design discussion
-are welcome once the repository is published to GitHub.
+The first local CLI milestone supports text and JSON reports. See [the project
+brief](docs/project-brief.md) and [research notes](docs/research.md).
 
 ## License
 
