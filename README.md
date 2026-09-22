@@ -134,6 +134,25 @@ organization-level GitHub Actions policies.
 The first local CLI milestone supports text and JSON reports. See [the project
 brief](docs/project-brief.md) and [research notes](docs/research.md).
 
+## Contributing and checks
+
+Before opening a pull request, run:
+
+```sh
+cargo fmt --all --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+```
+
+CI runs these checks on pull requests and pushes to `main`. A separate dependency
+job installs pinned versions of `cargo-audit` and `cargo-deny`, runs `cargo audit`
+against the lockfile and current RustSec database, and runs `cargo deny --locked
+check` using [deny.toml](deny.toml). These dependency checks need network access;
+the automation policy tests themselves do not. Dependabot checks Cargo and GitHub
+Actions dependencies weekly. Action references use full commit SHAs, and CI jobs
+receive only read access to repository contents. Repository branch protection
+must be configured separately to make successful checks mandatory for merging.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

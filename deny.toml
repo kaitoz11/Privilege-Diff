@@ -1,0 +1,22 @@
+[advisories]
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+
+[licenses]
+confidence-threshold = 0.95
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+skip = [
+  # thiserror 1 still uses syn 2; clap/serde derive use syn 3.
+  { crate = "syn@2.0.119", reason = "Required by thiserror-impl 1.0.69; remove when its dependency converges" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
